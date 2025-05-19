@@ -250,33 +250,33 @@
   copy:
     src: custom-fluentd.tar
     dest: /opt/fluentd/
-  #when:
-    #- inventory_hostname == "sepehr-node04" or ansible_host == "87.107.99.151"
-    #- inventory_hostname == "sepehr-node08" or ansible_host == "81.12.28.10"
-    #- inventory_hostname == "sepehr-node09" or ansible_host == "81.12.28.11"
-    #- inventory_hostname == "sepehr-node10" or ansible_host == "81.12.28.12"
+  when:
+    - inventory_hostname == "node04" or ansible_host == "87.107.99.151"
+    - inventory_hostname == "node08" or ansible_host == "81.12.28.10"
+    - inventory_hostname == "node09" or ansible_host == "81.12.28.11"
+    - inventory_hostname == "node10" or ansible_host == "81.12.28.12"
   tags: copy_docker_image
 
 - name: Copy the blackbox-exporter docker image tar archive from control node to destination host
   copy:
     src: blackbox-exporter.tar
     dest: /opt/fluentd/
-  #when:
-    #- inventory_hostname == "sepehr-node04" or ansible_host == "87.107.99.151"
-    #- inventory_hostname == "sepehr-node08" or ansible_host == "81.12.28.10"
-    #- inventory_hostname == "sepehr-node09" or ansible_host == "81.12.28.11"
-    #- inventory_hostname == "sepehr-node10" or ansible_host == "81.12.28.12"
+  when:
+    - inventory_hostname == "node04" or ansible_host == "87.107.99.151"
+    - inventory_hostname == "node08" or ansible_host == "81.12.28.10"
+    - inventory_hostname == "node09" or ansible_host == "81.12.28.11"
+    - inventory_hostname == "node10" or ansible_host == "81.12.28.12"
   tags: copy_docker_image
 
 - name: Copy the node-exporter docker image tar archive from control node to destination host
   copy:
     src: node-exporter.tar
     dest: /opt/fluentd/
-  #when:
-    #- inventory_hostname == "sepehr-node04" or ansible_host == "87.107.99.151"
-    #- inventory_hostname == "sepehr-node08" or ansible_host == "81.12.28.10"
-    #- inventory_hostname == "sepehr-node09" or ansible_host == "81.12.28.11"
-    #- inventory_hostname == "sepehr-node10" or ansible_host == "81.12.28.12"
+  when:
+    - inventory_hostname == "node04" or ansible_host == "87.107.99.151"
+    - inventory_hostname == "node08" or ansible_host == "81.12.28.10"
+    - inventory_hostname == "node09" or ansible_host == "81.12.28.11"
+    - inventory_hostname == "node10" or ansible_host == "81.12.28.12"
   tags: copy_docker_image
 
 - name: Load the Docker image on the destination host
@@ -284,11 +284,11 @@
     docker load -i /opt/fluentd/blackbox-exporter.tar
     docker load -i /opt/fluentd/node-exporter.tar
     docker load -i /opt/fluentd/custom-fluentd.tar
-  #when:
-    #- inventory_hostname == "sepehr-node04" or ansible_host == "87.107.99.151"
-    #- inventory_hostname == "sepehr-node08" or ansible_host == "81.12.28.10"
-    #- inventory_hostname == "sepehr-node09" or ansible_host == "81.12.28.11"
-    #- inventory_hostname == "sepehr-node10" or ansible_host == "81.12.28.12"
+  when:
+    - inventory_hostname == "node04" or ansible_host == "87.107.99.151"
+    - inventory_hostname == "node08" or ansible_host == "81.12.28.10"
+    - inventory_hostname == "node09" or ansible_host == "81.12.28.11"
+    - inventory_hostname == "node10" or ansible_host == "81.12.28.12"
   tags: copy_docker_image
 
 - name: Check is Node Exporter run
