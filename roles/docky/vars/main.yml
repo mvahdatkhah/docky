@@ -1,0 +1,37 @@
+---
+debian_docker_packages:
+  - docker
+  - docker-doc
+  - docker-compose
+  - podman-docker
+  - containerd
+  - runc
+
+redhat_docker_packages:
+  - docker
+  - docker-ce
+  - docker-ce-cli
+  - docker-client
+  - docker-client-latest
+  - docker-common
+  - docker-latest
+  - docker-latest-logrotate
+  - docker-logrotate
+  - docker-engine
+
+image_tar_files:
+  - blackbox-exporter.tar
+  - node-exporter.tar
+  - custom-fluentd.tar
+
+target_hosts:
+  - node04
+  - 192.168.56.151
+  - node08
+  - 192.168.56.10
+  - node09
+  - 192.168.56.11
+  - node10
+  - 192.168.56.12
+...    
+
