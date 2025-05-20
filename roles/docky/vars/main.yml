@@ -1,21 +1,53 @@
 ---
-docker_images:
-  - name: blackbox-exporter
-    file: blackbox-exporter.tar
+# General settings
+docker_users:
+  - ansible
+
+# Docker Compose
+docker_compose_version: "1.29.2"
+docker_compose_path: "/usr/local/bin/docker-compose"
+
+# Exporter image files
+exporter_images:
   - name: node-exporter
     file: node-exporter.tar
+  - name: blackbox-exporter
+    file: blackbox-exporter.tar
   - name: custom-fluentd
     file: custom-fluentd.tar
-docker_hosts:
-  - node04
-  - node08
-  - node09
-  - node10
-docker_scripts:
-  - script: run-node-exporter.sh
-    condition: "inventory_hostname != 'gitlab-cicd'"
-  - script: run-node-exporter-gitlab-cicd.sh
-    condition: "inventory_hostname == 'gitlab-cicd'"
-  - script: run-blackbox-exporter.sh
-    condition: "true"
+
+# Paths to run scripts
+run_scripts:
+  node_exporter: "run-node-exporter.sh"
+  node_exporter_gitlab: "run-node-exporter-gitlab-cicd.sh"
+  blackbox_exporter: "run-blackbox-exporter.sh"
+
+# Docker service options
+docker_service_name: docker
+
+# Debian-specific
+debian_docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# RedHat-specific
+redhat_docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+
+# Docker repo URLs
+docker_gpg_url_debian: https://download.docker.com/linux/debian/gpg
+docker_gpg_url_ubuntu: https://download.docker.com/linux/ubuntu/gpg
+docker_gpg_url_rhel: https://download.docker.com/linux/centos/gpg
+docker_repo_url_debian: "deb [arch=amd64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+docker_repo_url_ubuntu: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+docker_repo_url_rhel: "https://download.docker.com/linux/centos/docker-ce.repo"
+
+# Container resource limits (optional tuning)
+container_memory_limit: "256m"
+container_cpu_limit: "0.5"
 ...
