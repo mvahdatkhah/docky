@@ -1,22 +1,44 @@
 ---
-- name: Gather specific facts
+- name: Gather minimal facts
   ansible.builtin.setup:
     filter:
-      - ansible_distribution_file_variety
-      - ansible_os_family
       - ansible_distribution
+      - ansible_os_family
+      - ansible_distribution_file_variety
       - inventory_hostname
   tags: setup
 
-- name: Uninstall Docker packages
-  package:
-    name: "{{ redhat_docker_packages if ansible_distribution_file_variety == 'RedHat' else debian_docker_packages }}"
+- name: Remove old Docker packages (RedHat)
+  yum:
+    name:
+      - docker
+      - docker-ce
+      - docker-ce-cli
+      - docker-client
+      - docker-client-latest
+      - docker-common
+      - docker-latest
+      - docker-latest-logrotate
+      - docker-logrotate
+      - docker-engine
     state: absent
-  async: 7500
-  poll: 5
+  when: ansible_distribution_file_variety == "RedHat"
   tags: uninstall_docker
 
-- name: Remove Docker related directories
+- name: Remove old Docker packages (Debian)
+  apt:
+    name:
+      - docker
+      - docker-doc
+      - docker-compose
+      - podman-docker
+      - containerd
+      - runc
+    state: absent
+  when: ansible_os_family == "Debian"
+  tags: uninstall_docker
+
+- name: Remove Docker-related directories
   file:
     path: "{{ item }}"
     state: absent
@@ -29,179 +51,174 @@
     - /etc/apt/sources.list.d/docker.list
   tags: docker_remove_files
 
-- name: Update system packages
-  block:
-    - name: RedHat - update packages
-      yum:
-        name: "*"
-        state: latest
-        exclude: kernel*
-      when: ansible_distribution_file_variety == 'RedHat'
-
-    - name: Debian - update packages
-      apt:
-        upgrade: yes
-        autoremove: yes
-        cache_valid_time: 86400
-      when: ansible_os_family == 'Debian'
-  async: 7500
-  poll: 5
-  tags: update_all_packages
-
-- name: Install required system packages
-  package:
-    name: >-
-      {{
-        ['yum-utils', 'device-mapper-persistent-data', 'lvm2']
-        if ansible_distribution_file_variety == 'RedHat'
-        else [
-          'apt-transport-https', 'ca-certificates', 'lsb-release',
-          'curl', 'gnupg-agent', 'software-properties-common',
-          'python3-pip', 'virtualenv', 'python3-setuptools'
-        ]
-      }}
+- name: Update system packages (RedHat)
+  yum:
+    name: "*"
     state: latest
-  async: 7500
-  poll: 5
-  tags: req_sys_packages
+    exclude: kernel*
+  when: ansible_distribution_file_variety == "RedHat"
+  tags: update_packages
 
-- name: Add Docker GPG key
-  shell: |
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL {{ docker_gpg_url }} | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-  vars:
-    docker_gpg_url: >-
-      {{
-        'https://download.docker.com/linux/ubuntu/gpg' if ansible_distribution == 'Ubuntu'
-        else 'https://download.docker.com/linux/debian/gpg'
-      }}
-  when: ansible_os_family == 'Debian'
-  args:
-    executable: /bin/bash
-  tags: add_docker_gpg
+- name: Install required packages (RedHat)
+  yum:
+    name:
+      - yum-utils
+      - device-mapper-persistent-data
+      - lvm2
+    state: latest
+  when: ansible_distribution_file_variety == "RedHat"
+  tags: install_dependencies
 
-- name: Add Docker apt repository
-  shell: |
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ ansible_distribution | lower }} $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
-    apt-get update
-  when: ansible_os_family == 'Debian'
-  args:
-    executable: /bin/bash
-  tags: add_repo_apt
+- name: Update system packages (Debian)
+  apt:
+    upgrade: yes
+    autoremove: yes
+    cache_valid_time: 86400
+  when: ansible_os_family == "Debian"
+  tags: update_packages
 
-- name: Add Docker yum repository on RedHat
+- name: Install required packages (Debian)
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - lsb-release
+      - curl
+      - gnupg-agent
+      - software-properties-common
+      - python3-pip
+      - virtualenv
+      - python3-setuptools
+    state: latest
+  when: ansible_os_family == "Debian"
+  tags: install_dependencies
+
+- name: Set distribution name for RedHat
+  set_fact:
+    mydistribution: "{{ 'rhel' if (ansible_distribution == 'Red Hat Enterprise Linux') else (ansible_distribution | lower) }}"
+  when: ansible_distribution_file_variety == "RedHat"
+  tags: setup
+
+- name: Add Docker repo and GPG (Debian/Ubuntu)
   block:
-    - name: Set mydistribution fact
-      set_fact:
-        mydistribution: "{{ 'rhel' if ansible_distribution == 'Red Hat Enterprise Linux' else ansible_distribution | lower }}"
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: 0755
 
-    - name: Add Docker signing key
-      rpm_key:
+    - name: Add GPG key
+      shell: >
+        curl -fsSL https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg |
+        gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      args:
+        executable: /bin/bash
+
+    - name: Add Docker repo
+      shell: >
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg]
+        https://download.docker.com/linux/{{ ansible_distribution | lower }}
+        $(. /etc/os-release && echo $VERSION_CODENAME) stable" |
+        tee /etc/apt/sources.list.d/docker.list > /dev/null && apt update
+      args:
+        executable: /bin/bash
+  when: ansible_os_family == "Debian"
+  tags: docker_repo
+
+- name: Add Docker GPG key and repo (RedHat)
+  block:
+    - rpm_key:
         key: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
         state: present
 
-    - name: Add Docker yum repo
-      yum_repository:
+    - yum_repository:
         name: docker
-        description: Docker repository
+        description: Docker Repository
         baseurl: "https://download.docker.com/linux/{{ mydistribution }}/$releasever/$basearch/stable"
         enabled: yes
         gpgcheck: yes
         gpgkey: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
-  when: ansible_distribution_file_variety == 'RedHat'
-  tags: add_repo
+  when: ansible_distribution_file_variety == "RedHat"
+  tags: docker_repo
 
-- name: Install Docker Engine
+- name: Install Docker packages
   package:
     name:
       - docker-ce
       - docker-ce-cli
       - containerd.io
-      - docker-buildx-plugin
       - docker-compose-plugin
     state: latest
-  async: 7500
-  poll: 5
-  when: ansible_os_family == 'Debian' or ansible_distribution_file_variety == 'RedHat'
-  tags: install_docker_engine
+  tags: install_docker
 
-- name: Install docker-compose binary
+- name: Install docker-compose binary manually
   get_url:
     url: https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64
     dest: /usr/local/bin/docker-compose
     mode: '0755'
   tags: docker_compose
 
-- name: Enable & start Docker
+- name: Enable and start Docker service
   service:
     name: docker
+    enabled: yes
     state: started
-    enabled: true
-  tags: enable_start_docker
+  tags: docker_service
 
-- name: Uninstall and Install docker-py module for Ansible
+- name: Ensure Docker SDK for Python is installed (Debian)
   pip:
-    name: docker-py
+    name: docker
     state: latest
-  when: ansible_os_family == 'Debian'
+  when: ansible_os_family == "Debian"
   tags: install_pip
 
-- name: Add 'ansible' user to docker group
+- name: Add ansible user to docker group
   user:
     name: ansible
     groups: docker
     append: yes
   tags: usermod
 
-- name: Pull Prometheus node-exporter image
+- name: Pull node exporter image
   docker_image:
-    name: quay.io/prometheus/node-exporter:latest
+    name: quay.io/prometheus/node-exporter
     source: pull
-  tags: docker_image_node_exporter
+  tags: docker_image
 
-- name: Copy Docker image tarballs to target hosts
+- name: Copy Docker images to target hosts
   copy:
-    src: "{{ item }}"
+    src: "{{ item.file }}"
     dest: /opt/fluentd/
-  loop: "{{ image_tar_files }}"
-  when: inventory_hostname in target_hosts or ansible_host in target_hosts
-  tags: copy_docker_image
+  loop: "{{ docker_images }}"
+  when: inventory_hostname in docker_hosts
+  tags: docker_image
 
-- name: Load Docker images from tar files
-  shell: |
-    for img in *.tar; do docker load -i /opt/fluentd/$img; done
-  args:
-    executable: /bin/bash
-  when: inventory_hostname in target_hosts or ansible_host in target_hosts
-  tags: load_docker_image
+- name: Load Docker images
+  shell: "docker load -i /opt/fluentd/{{ item.file }}"
+  loop: "{{ docker_images }}"
+  when: inventory_hostname in docker_hosts
+  tags: docker_image
 
-- name: Check if any container has exited
-  shell: docker ps -f 'status=exited'
+- name: Check if container is exited
+  shell: docker ps -q -f status=exited
   register: container_status
-  ignore_errors: true
   changed_when: false
+  failed_when: false
   tags: check_container
 
-- name: Run node exporter
-  script: "{{ 'run-node-exporter-gitlab-cicd.sh' if inventory_hostname == 'gitlab-cicd' else 'run-node-exporter.sh' }}"
-  when:
-    - container_status.rc != 0
-    - inventory_hostname != "gitlab-cicd" or inventory_hostname == "gitlab-cicd"
-  tags: run_node_exporter
+- name: Run monitoring containers
+  script: "{{ item.script }}"
+  loop: "{{ docker_scripts }}"
+  when: container_status.stdout == "" and (item.condition | bool)
+  tags: run_exporters
 
-- name: Run blackbox exporter
-  script: run-blackbox-exporter.sh
-  when: container_status.rc != 0
-  tags: run_blackbox_exporter
-
-- name: Get Docker version
+- name: Show Docker version
   script: docker_version.sh
-  register: docker_ver
+  register: docker_version_output
   tags: docker_version
 
-- name: Print Docker version
+- name: Display Docker version output
   debug:
-    var: docker_ver.stdout_lines
+    var: docker_version_output.stdout_lines
   tags: docker_version
 ...
