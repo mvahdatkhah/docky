@@ -105,20 +105,18 @@
       file:
         path: /etc/apt/keyrings
         state: directory
-        mode: 0755
+        mode: '0755'
 
     - name: Add GPG key
       shell: >
-        curl -fsSL https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg |
+        curl -fsSL {{ docker_gpg_url_ubuntu if ansible_distribution == 'Ubuntu' else docker_gpg_url_debian }} |
         gpg --dearmor -o /etc/apt/keyrings/docker.gpg
       args:
         executable: /bin/bash
 
     - name: Add Docker repo
       shell: >
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg]
-        https://download.docker.com/linux/{{ ansible_distribution | lower }}
-        $(. /etc/os-release && echo $VERSION_CODENAME) stable" |
+        echo "{{ docker_repo_url_ubuntu if ansible_distribution == 'Ubuntu' else docker_repo_url_debian }}" |
         tee /etc/apt/sources.list.d/docker.list > /dev/null && apt update
       args:
         executable: /bin/bash
@@ -128,39 +126,35 @@
 - name: Add Docker GPG key and repo (RedHat)
   block:
     - rpm_key:
-        key: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
+        key: "{{ docker_gpg_url_rhel }}"
         state: present
 
     - yum_repository:
         name: docker
         description: Docker Repository
-        baseurl: "https://download.docker.com/linux/{{ mydistribution }}/$releasever/$basearch/stable"
+        baseurl: "{{ docker_repo_url_rhel }}"
         enabled: yes
         gpgcheck: yes
-        gpgkey: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
+        gpgkey: "{{ docker_gpg_url_rhel }}"
   when: ansible_distribution_file_variety == "RedHat"
   tags: docker_repo
 
 - name: Install Docker packages
   package:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-compose-plugin
+    name: "{{ debian_docker_packages if ansible_os_family == 'Debian' else redhat_docker_packages }}"
     state: latest
   tags: install_docker
 
 - name: Install docker-compose binary manually
   get_url:
-    url: https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64
-    dest: /usr/local/bin/docker-compose
+    url: "https://github.com/docker/compose/releases/download/v{{ docker_compose_version }}/docker-compose-linux-x86_64"
+    dest: "{{ docker_compose_path }}"
     mode: '0755'
   tags: docker_compose
 
 - name: Enable and start Docker service
   service:
-    name: docker
+    name: "{{ docker_service_name }}"
     enabled: yes
     state: started
   tags: docker_service
@@ -172,31 +166,24 @@
   when: ansible_os_family == "Debian"
   tags: install_pip
 
-- name: Add ansible user to docker group
+- name: Add Docker users to docker group
   user:
-    name: ansible
+    name: "{{ item }}"
     groups: docker
     append: yes
+  loop: "{{ docker_users }}"
   tags: usermod
-
-- name: Pull node exporter image
-  docker_image:
-    name: quay.io/prometheus/node-exporter
-    source: pull
-  tags: docker_image
 
 - name: Copy Docker images to target hosts
   copy:
     src: "{{ item.file }}"
     dest: /opt/fluentd/
-  loop: "{{ docker_images }}"
-  when: inventory_hostname in docker_hosts
+  loop: "{{ exporter_images }}"
   tags: docker_image
 
 - name: Load Docker images
   shell: "docker load -i /opt/fluentd/{{ item.file }}"
-  loop: "{{ docker_images }}"
-  when: inventory_hostname in docker_hosts
+  loop: "{{ exporter_images }}"
   tags: docker_image
 
 - name: Check if container is exited
@@ -207,14 +194,17 @@
   tags: check_container
 
 - name: Run monitoring containers
-  script: "{{ item.script }}"
-  loop: "{{ docker_scripts }}"
-  when: container_status.stdout == "" and (item.condition | bool)
+  script: "{{ item }}"
+  loop:
+    - "{{ run_scripts.node_exporter }}"
+    - "{{ run_scripts.blackbox_exporter }}"
+  when: container_status.stdout == ""
   tags: run_exporters
 
 - name: Show Docker version
-  script: docker_version.sh
+  shell: docker version
   register: docker_version_output
+  changed_when: false
   tags: docker_version
 
 - name: Display Docker version output
