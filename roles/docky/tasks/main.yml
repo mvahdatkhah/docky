@@ -1,152 +1,119 @@
 ---
-- name: Filter and return only selected facts
+- name: Gather specific facts
   ansible.builtin.setup:
     filter:
-      - 'ansible_distribution_file_variety'
-      - 'ansible_os_family'
-      - 'ansible_distribution'
-      - 'inventory_hostname'
+      - ansible_distribution_file_variety
+      - ansible_os_family
+      - ansible_distribution
+      - inventory_hostname
   tags: setup
 
-- name: Uninstall RedHat docker packages
-  yum:
-    name:
-      - docker
-      - docker-ce
-      - docker-ce-cli
-      - docker-client
-      - docker-client-latest
-      - docker-common
-      - docker-latest
-      - docker-latest-logrotate
-      - docker-logrotate
-      - docker-engine
-    state: "absent"
+- name: Uninstall Docker packages
+  package:
+    name: "{{ redhat_docker_packages if ansible_distribution_file_variety == 'RedHat' else debian_docker_packages }}"
+    state: absent
   async: 7500
   poll: 5
-  when: ansible_distribution_file_variety == "RedHat"
   tags: uninstall_docker
 
-- name: Uninstall Debian docker packages
-  apt:
-    name:
-      - docker
-      - docker-doc
-      - docker-compose
-      - podman-docker
-      - containerd
-      - runc
-    state: "absent"
-  #async: 7500
-  poll: 5
-  when: ansible_os_family == "Debian"
-  tags: uninstall_docker
-
-- name: Remove file (delete file)
+- name: Remove Docker related directories
   file:
-    path:
-      - /var/lib/docker
-      - /var/lib/containerd
-      - /etc/docker
-      - /etc/apt/keyrings/docker.gpg
-      - /etc/apt/sources.list.d/docker.list
+    path: "{{ item }}"
+    state: absent
     force: true
-    state: "absent"
+  loop:
+    - /var/lib/docker
+    - /var/lib/containerd
+    - /etc/docker
+    - /etc/apt/keyrings/docker.gpg
+    - /etc/apt/sources.list.d/docker.list
   tags: docker_remove_files
 
-- name: Update all packages exclude kernel package on RedHat distribution
-  yum:
-    name: "*"
-    state: latest
-    exclude: kernel*
+- name: Update system packages
+  block:
+    - name: RedHat - update packages
+      yum:
+        name: "*"
+        state: latest
+        exclude: kernel*
+      when: ansible_distribution_file_variety == 'RedHat'
+
+    - name: Debian - update packages
+      apt:
+        upgrade: yes
+        autoremove: yes
+        cache_valid_time: 86400
+      when: ansible_os_family == 'Debian'
   async: 7500
   poll: 5
-  when: ansible_distribution_file_variety == "RedHat"
   tags: update_all_packages
 
-- name: Install required system packages on RedHat distribution
-  yum:
-    name:
-      - yum-utils
-      - device-mapper-persistent-data
-      - lvm2
-      #- python-docker-py
+- name: Install required system packages
+  package:
+    name: >-
+      {{
+        ['yum-utils', 'device-mapper-persistent-data', 'lvm2']
+        if ansible_distribution_file_variety == 'RedHat'
+        else [
+          'apt-transport-https', 'ca-certificates', 'lsb-release',
+          'curl', 'gnupg-agent', 'software-properties-common',
+          'python3-pip', 'virtualenv', 'python3-setuptools'
+        ]
+      }}
     state: latest
   async: 7500
   poll: 5
-  when: ansible_distribution_file_variety == "RedHat"
   tags: req_sys_packages
 
-- name: Update and upgrade apt packages on Debian distribution
-  apt:
-    upgrade: yes
-    #update_cache: yes
-    autoremove: yes
-    cache_valid_time: 86400 #One day
-  #async: 7500
-  poll: 5
-  when: ansible_os_family == "Debian"
-  tags: update_packages
-
-- name: Install required system packages on Debian distribution
-  apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - lsb-release
-      - curl
-      - gnupg-agent
-      - curl
-      - software-properties-common
-      - python3-pip
-      - virtualenv
-      - python3-setuptools
-    state: latest
-  #async: 7500
-  poll: 5
-  when: ansible_os_family == "Debian"
-  tags: req_sys_packages
-
-- name: Add Docker's official GPG key
+- name: Add Docker GPG key
   shell: |
     sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    curl -fsSL {{ docker_gpg_url }} | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+  vars:
+    docker_gpg_url: >-
+      {{
+        'https://download.docker.com/linux/ubuntu/gpg' if ansible_distribution == 'Ubuntu'
+        else 'https://download.docker.com/linux/debian/gpg'
+      }}
+  when: ansible_os_family == 'Debian'
   args:
     executable: /bin/bash
-  when: ansible_distribution == "Ubuntu"
   tags: add_docker_gpg
 
-- name: Add Docker's official GPG key
+- name: Add Docker apt repository
   shell: |
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ ansible_distribution | lower }} $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+    apt-get update
+  when: ansible_os_family == 'Debian'
   args:
     executable: /bin/bash
-  when: ansible_distribution == "Debian"
-  tags: add_docker_gpg
-
-- name: Add the repository to Apt sources on Ubuntu distribution
-  shell: |
-    echo "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update
-  args:
-    executable: /bin/bash
-  when: ansible_distribution == "Ubuntu"
   tags: add_repo_apt
 
-- name: Add the repository to Apt sources on Debian distribution
-  shell: |
-    echo "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update
-  args:
-    executable: /bin/bash
-  when: ansible_distribution == "Debian"
-  tags: add_repo_apt
+- name: Add Docker yum repository on RedHat
+  block:
+    - name: Set mydistribution fact
+      set_fact:
+        mydistribution: "{{ 'rhel' if ansible_distribution == 'Red Hat Enterprise Linux' else ansible_distribution | lower }}"
 
-- name: Install docker engine on Debian OS family
-  ansible.builtin.apt:
+    - name: Add Docker signing key
+      rpm_key:
+        key: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
+        state: present
+
+    - name: Add Docker yum repo
+      yum_repository:
+        name: docker
+        description: Docker repository
+        baseurl: "https://download.docker.com/linux/{{ mydistribution }}/$releasever/$basearch/stable"
+        enabled: yes
+        gpgcheck: yes
+        gpgkey: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
+  when: ansible_distribution_file_variety == 'RedHat'
+  tags: add_repo
+
+- name: Install Docker Engine
+  package:
     name:
       - docker-ce
       - docker-ce-cli
@@ -154,181 +121,87 @@
       - docker-buildx-plugin
       - docker-compose-plugin
     state: latest
-  #async: 7500
-  poll: 5
-  when: ansible_os_family == "Debian"
-  tags: install_docker_engine
-
-- name: Set mydistribution on RedHat distribution
-  ansible.builtin.set_fact:
-    mydistribution: "{{ 'rhel' if (ansible_distribution == 'Red Hat Enterprise Linux') else (ansible_distribution | lower) }}"
-  when: ansible_distribution_file_variety == "RedHat"
-  tags: set_mydistribution
-
-- name: Add signing key on RedHat distribution
-  ansible.builtin.rpm_key:
-    key: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
-    state: present
-  when: ansible_distribution_file_variety == "RedHat"
-  tags: add_sign_key
-
-- name: Add repository into repo.d list on RedHat distribution
-  ansible.builtin.yum_repository:
-    name: docker
-    description: docker repository
-    baseurl: "https://download.docker.com/linux/{{ mydistribution }}/$releasever/$basearch/stable"
-    enabled: "True"
-    gpgcheck: "True"
-    gpgkey: "https://download.docker.com/linux/{{ mydistribution }}/gpg"
-  when: ansible_distribution_file_variety == "RedHat"
-  tags: add_repo
-
-- name: Install Docker on RedHat distribution
-  ansible.builtin.yum:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-    state: latest
-    update_cache: "True"
   async: 7500
   poll: 5
-  when: ansible_distribution_file_variety == "RedHat"
-  tags: install_docker
+  when: ansible_os_family == 'Debian' or ansible_distribution_file_variety == 'RedHat'
+  tags: install_docker_engine
 
-- name: Install docker-compose
+- name: Install docker-compose binary
   get_url:
     url: https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64
     dest: /usr/local/bin/docker-compose
-    mode: 'u+x,g+x'
+    mode: '0755'
   tags: docker_compose
 
-- name: Set execution permission
-  file:
-    dest: /usr/local/bin/docker-compose
-    mode: 'a+x'
-  tags: sym_link
-
-- name: Enable & start docker service
+- name: Enable & start Docker
   service:
     name: docker
-    enabled: yes
     state: started
+    enabled: true
   tags: enable_start_docker
 
-- name: Uninstall docker-py, docker and docker-compose Modules, required by ansible
-  pip:
-    name:
-      - docker-py
-      - docker
-      - docker-compose
-    state: absent
-  when: ansible_os_family == "Debian"
-  tags: install_pip
-
-- name: Install the Docker module for Python, required by ansible
+- name: Uninstall and Install docker-py module for Ansible
   pip:
     name: docker-py
     state: latest
-  when: ansible_os_family == "Debian"
+  when: ansible_os_family == 'Debian'
   tags: install_pip
 
-- name: Adding existing user to group sudo
+- name: Add 'ansible' user to docker group
   user:
     name: ansible
     groups: docker
     append: yes
   tags: usermod
 
-- name: Pull docker image
+- name: Pull Prometheus node-exporter image
   docker_image:
     name: quay.io/prometheus/node-exporter:latest
     source: pull
-  tags: docker_image_node-exporter
+  tags: docker_image_node_exporter
 
-- name: Copy the custom-fluentd docker image tar archive from control node to destination host
+- name: Copy Docker image tarballs to target hosts
   copy:
-    src: custom-fluentd.tar
+    src: "{{ item }}"
     dest: /opt/fluentd/
-  when:
-    - inventory_hostname == "node04" or ansible_host == "192.168.56.151"
-    - inventory_hostname == "node08" or ansible_host == "192.168.56.10"
-    - inventory_hostname == "node09" or ansible_host == "192.168.56.11"
-    - inventory_hostname == "node10" or ansible_host == "192.168.56.12"
+  loop: "{{ image_tar_files }}"
+  when: inventory_hostname in target_hosts or ansible_host in target_hosts
   tags: copy_docker_image
 
-- name: Copy the blackbox-exporter docker image tar archive from control node to destination host
-  copy:
-    src: blackbox-exporter.tar
-    dest: /opt/fluentd/
-  when:
-    - inventory_hostname == "node04" or ansible_host == "192.168.56.151"
-    - inventory_hostname == "node08" or ansible_host == "192.168.56.10"
-    - inventory_hostname == "node09" or ansible_host == "192.168.56.11"
-    - inventory_hostname == "node10" or ansible_host == "192.168.56.12"
-  tags: copy_docker_image
-
-- name: Copy the node-exporter docker image tar archive from control node to destination host
-  copy:
-    src: node-exporter.tar
-    dest: /opt/fluentd/
-  when:
-    - inventory_hostname == "node04" or ansible_host == "192.168.56.151"
-    - inventory_hostname == "node08" or ansible_host == "192.168.56.10"
-    - inventory_hostname == "node09" or ansible_host == "192.168.56.11"
-    - inventory_hostname == "node10" or ansible_host == "192.168.56.12"
-  tags: copy_docker_image
-
-- name: Load the Docker image on the destination host
+- name: Load Docker images from tar files
   shell: |
-    docker load -i /opt/fluentd/blackbox-exporter.tar
-    docker load -i /opt/fluentd/node-exporter.tar
-    docker load -i /opt/fluentd/custom-fluentd.tar
-  when:
-    - inventory_hostname == "node04" or ansible_host == "192.168.56.151"
-    - inventory_hostname == "node08" or ansible_host == "192.168.56.10"
-    - inventory_hostname == "node09" or ansible_host == "192.168.56.11"
-    - inventory_hostname == "node10" or ansible_host == "192.168.56.12"
-  tags: copy_docker_image
+    for img in *.tar; do docker load -i /opt/fluentd/$img; done
+  args:
+    executable: /bin/bash
+  when: inventory_hostname in target_hosts or ansible_host in target_hosts
+  tags: load_docker_image
 
-- name: Check is Node Exporter run
-  shell: sudo docker ps -f 'status=exited' > /dev/null 2>&1
-  register: is_container_exited
-  ignore_errors: yes
+- name: Check if any container has exited
+  shell: docker ps -f 'status=exited'
+  register: container_status
+  ignore_errors: true
+  changed_when: false
+  tags: check_container
+
+- name: Run node exporter
+  script: "{{ 'run-node-exporter-gitlab-cicd.sh' if inventory_hostname == 'gitlab-cicd' else 'run-node-exporter.sh' }}"
+  when:
+    - container_status.rc != 0
+    - inventory_hostname != "gitlab-cicd" or inventory_hostname == "gitlab-cicd"
   tags: run_node_exporter
 
-- name: Copy and Execute the run-node-exporter
-  script: run-node-exporter.sh
-  when:
-    - is_container_exited != 0
-    - inventory_hostname != "gitlab-cicd"
-  tags: run_node_exporter
-
-- name: Copy and Execute the run-node-exporter-gitlab-cicd
-  script: run-node-exporter-gitlab-cicd.sh
-  when:
-    - is_container_exited != 0
-    - inventory_hostname == "gitlab-cicd"
-  tags: run_node_exporter
-
-- name: Check is Blackbox Exporter run
-  shell: sudo docker ps -f 'status=exited' > /dev/null 2>&1
-  register: is_container_exited
-  ignore_errors: yes
-  tags: run_blackbox_exporter
-
-- name: Copy and Execute the blackbox-exporter
+- name: Run blackbox exporter
   script: run-blackbox-exporter.sh
-  when: is_container_exited != 0
+  when: container_status.rc != 0
   tags: run_blackbox_exporter
 
-- name: Copy and Execute the docker_version
+- name: Get Docker version
   script: docker_version.sh
-  register: results
+  register: docker_ver
   tags: docker_version
 
-- name: Get docker version info
+- name: Print Docker version
   debug:
-    var: results.stdout_lines
+    var: docker_ver.stdout_lines
   tags: docker_version
 ...
