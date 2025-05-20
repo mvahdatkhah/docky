@@ -24,6 +24,8 @@ This Ansible playbook automates the installation, removal, and configuration of 
 │   └── main.yml                   # Main Ansible task file
 ├── handlers/
 │   └── main.yml                   # Ansible handler to restart Docker
+├── vars/
+│   └── main.yml                   # Ansible var file
 ├── files/
 │   ├── run-node-exporter.sh       # Secure Node Exporter container run script
 │   ├── run-blackbox-exporter.sh   # Secure Blackbox Exporter container run script
